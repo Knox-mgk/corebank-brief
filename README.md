@@ -3,9 +3,15 @@
 A read-only brief. **No code lives here**, by design: this repo exists so the
 idea and the remaining work can be read from any device without opening the
 implementation. The code is at
-[Knox-mgk/corebank](https://github.com/Knox-mgk/corebank) (private); the
-authoritative design document is `docs/architecture.md` there, and this file is
-its plain-language summary plus a live status board.
+[Knox-mgk/corebank](https://github.com/Knox-mgk/corebank) — **deliberately
+private**, and it will 404 for you unless you are the author. This brief is
+public so the design can be read and discussed; the implementation is not.
+
+**Nothing described here is deployed, and it holds no money.** The status board
+in §5 lists unfinished and known-broken work openly because that is what makes
+a status board useful — none of it is reachable by anyone, there is no running
+instance, and §3 sets out why no real money can move until a licensed partner
+signs.
 
 **Last synced with the code:** 2026-10-12, commit `714c7a9`.
 **Suite at that commit:** 258 tests, 0 failures.
