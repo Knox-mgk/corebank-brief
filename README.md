@@ -13,7 +13,7 @@ a status board useful — none of it is reachable by anyone, there is no running
 instance, and §3 sets out why no real money can move until a licensed partner
 signs.
 
-**Last synced with the code:** 2026-10-21, commit `3e1f283`.
+**Last synced with the code:** 2026-10-21, commit `653c540`.
 **Suite at that commit:** 291 unit tests + 451 live assertions, 0 failures,
 0 resource warnings under `-W always::ResourceWarning`.
 
@@ -196,9 +196,9 @@ under a higher one. Each step ends with a green suite and a commit.
 | 1 | Tenancy migration (schema v6) | **done** |
 | 2 | Tenant-scoped reads and writes + second-org attack test | **done** |
 | 3 | Pooled settlement + the custody invariant | **next** |
-| 4 | Inbound: virtual accounts + collections webhook | not started |
+| 4 | Inbound: virtual accounts + collections webhook | not started — identity is a prerequisite, see below |
 | 5 | Outbound webhooks: signing, retries, dead-letter, replay | not started |
-| 6 | KYC tiers + limit intersection | not started (research done) |
+| 6 | KYC tiers + limit intersection | not started (research done; storage half is now a step-4 dependency) |
 | 7 | Org-scoped fees replacing the single schedule | not started |
 | 8 | Postgres | not started — blocks launch, not development |
 
@@ -265,6 +265,39 @@ next, and it is the step the whole custody decision in §3 exists to serve:**
 Step 2's isolation work is what made this safe to start: cross-tenant writes
 beneath a pooled balance are how one tenant spends another tenant's money, and
 until the attack test existed nothing in a green suite would have reported it.
+
+### Issuing account details: probed 2026-10-21, and it reorders the build
+
+"Give each customer their own account number to pay into" is the feature a BaaS
+is FOR, and it sat at step 4 with KYC deferred to step 6 — on the assumption
+that identity tiers only cap what an account may do once it exists. A direct
+probe of the provider's sandbox says the dependency runs the other way:
+
+- A **permanent** per-customer account number is refused outright without a BVN
+  or NIN: `400 — "BVN or NIN is required for static account number"`. That is
+  not a provider preference. The number lands on a deposit-taking institution's
+  core banking system, and under the CBN tiered-KYC framework that institution
+  owes the identity record — so no amount of ledger work issues one. Identity
+  capture, peppered hashing and verification must exist FIRST.
+- A **dynamic** account issues with no identity at all, but comes back with a
+  one-hour expiry and single-use frequency. That is a checkout primitive, not a
+  wallet address: it cannot hold a recurring balance, so it does not satisfy
+  the inbound requirement on its own.
+
+So step 4 splits. The checkout variant is buildable now; per-customer account
+details need step 6's storage half landed first. The limit intersection stays
+at step 6.
+
+Two further findings worth recording, because both would have surfaced as
+confusing failures later rather than as design facts now. The sandbox mints
+**one shared mock account number for every customer**, so a second issuance
+collides on the uniqueness constraint — which is the constraint working, since
+two live customers sharing a number would credit the wrong person's money. It
+stays, and attribution gets tested against a faked provider instead. And the
+response carries a bank **name** but no bank code and no account name, both of
+which the schema requires — so the account name has to be derived from the
+customer record we already hold, or the first real issuance fails on an
+integrity error after the money side is already correct.
 
 **The real blocker is not code.** §3 picks the sponsored shape, which needs a
 licensed partner to sign before any of this can hold a naira. No amount of
