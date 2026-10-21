@@ -29,8 +29,9 @@ with a virtual NUBAN that can receive money, and money can be paid out to any
 Nigerian bank account. On top of that sits the feature it was forked from:
 **AI agents that can spend money under limits they cannot reach.**
 
-It is forked from [aibank](https://github.com/Knox-mgk/aibank), and the fork
-inverts aibank's defining property:
+It is forked from **aibank** — code at `Knox-mgk/aibank`, now **private**; the
+public brief for it is [aibank-brief](https://github.com/Knox-mgk/aibank-brief).
+The fork inverts aibank's defining property:
 
 | | aibank | corebank |
 |---|---|---|
