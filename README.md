@@ -13,8 +13,8 @@ a status board useful — none of it is reachable by anyone, there is no running
 instance, and §3 sets out why no real money can move until a licensed partner
 signs.
 
-**Last synced with the code:** 2026-10-21, commit `653c540`.
-**Suite at that commit:** 291 unit tests + 451 live assertions, 0 failures,
+**Last synced with the code:** 2026-10-21, commit `4f35c3f`.
+**Suite at that commit:** 342 unit tests + 451 live assertions, 0 failures,
 0 resource warnings under `-W always::ResourceWarning`.
 
 ---
@@ -196,7 +196,7 @@ under a higher one. Each step ends with a green suite and a commit.
 |---|---|---|
 | 1 | Tenancy migration (schema v6) | **done** |
 | 2 | Tenant-scoped reads and writes + second-org attack test | **done** |
-| 3 | Pooled settlement + the custody invariant | **next** |
+| 3 | Pooled settlement + the custody invariant | **done** |
 | 4 | Inbound: virtual accounts + collections webhook | not started — identity is a prerequisite, see below |
 | 5 | Outbound webhooks: signing, retries, dead-letter, replay | not started |
 | 6 | KYC tiers + limit intersection | not started (research done; storage half is now a step-4 dependency) |
@@ -250,20 +250,41 @@ deployment artifacts.
 
 ## 6. What is next
 
-**Step 2 is done. Step 3 — pooled settlement and the custody invariant — is
-next, and it is the step the whole custody decision in §3 exists to serve:**
+**Steps 2 and 3 are done. Step 4 — inbound money — is next.**
 
-1. An unexplained-difference account, so the gap between our ledger and the
-   partner's statement lands somewhere visible instead of being quietly
-   absorbed.
-2. Reconciliation against the partner as the external system of record — the
-   partner, not us, is the authority on what a balance is.
-3. A reconciliation command that exits non-zero when there is a difference, so
-   cron alerts without anyone parsing its output, and that refuses to
-   self-correct. Auto-agreeing the books with the bank is how a shortfall
-   becomes invisible.
+### Step 3 shipped 2026-10-21: the custody invariant can now fail
 
-Step 2's isolation work is what made this safe to start: cross-tenant writes
+It could not before, and that was the real finding. A settled payout credited
+an "external" account and left the settlement account untouched, so the
+ledger's idea of what the partner holds never fell when money went out. The
+invariant was wired to a number that only ever moved one way — an alarm that
+cannot fire, which is worse than no alarm, because the dashboard reads green.
+
+What exists now:
+
+1. **The pool is a real ledger account.** Deposits raise it, settled payouts
+   drain it, and the partner's fees come out of it explicitly — because a pool
+   that silently shrinks by the provider's cut fails the invariant every single
+   day, and the first instinct is to widen the tolerance until it detects
+   nothing.
+2. **Reconciliation records the difference and corrects nothing.** The gap
+   between our books and the partner's figure posts to an unexplained-difference
+   account. The only way it leaves the books is a human naming where the money
+   actually belongs; there is deliberately no write-off function, and a test
+   asserts the forbidden function names do not exist.
+3. **The command exits non-zero while a difference is open** (2 for an
+   unexplained gap, 3 for our own postings disagreeing about the pool — a
+   different incident, and a worse one), so cron alerts without parsing output.
+4. **Money in flight is reported, never subtracted.** A submitted payout may or
+   may not have been debited at the partner yet. That band of genuine ambiguity
+   is labelled and still alarms, because auto-forgiving it silences the check
+   during exactly the window when a payout can go wrong.
+
+342 unit tests (51 new) and five live smoke suites pass. Both negative controls
+were run: reverting the settlement path fails a test, and making reconciliation
+self-correct fails eleven.
+
+Step 2's isolation work is what made this safe to build: cross-tenant writes
 beneath a pooled balance are how one tenant spends another tenant's money, and
 until the attack test existed nothing in a green suite would have reported it.
 
@@ -335,7 +356,15 @@ be blocking when every one of the eight steps is green.
 - Balances are derived, never stored. A cached tenant balance will be the first
   thing proposed for performance and the first thing to drift.
 - Trial balance zero is asserted after every money test, and the custody
-  invariant will be asserted alongside it.
+  invariant is asserted alongside it.
+- An invariant wired to a number that can only move one way reads as green
+  forever. Before step 3 the custody check compared our books against a
+  settlement balance that payouts never touched, so it could not fail. When a
+  check has never fired, the first question is whether it is able to.
+- The pool is carried NEGATIVE while it holds money, because wallets are
+  carried positive-when-owed and the ledger sums to zero. The inversion lives
+  in exactly one function; a second place that negates reports a shortfall as
+  a surplus.
 
 ---
 
@@ -344,5 +373,6 @@ be blocking when every one of the eight steps is green.
 `Knox-mgk/corebank`'s `README.md` is still aibank's, describing a self-hosted
 deployment that never holds money. That contradicts §1 and §3 above and is a
 known stale document — **this brief is the accurate description of the shape**
-until the code repo's README is rewritten (it is not worth rewriting before step
-3 lands, since the custody model is what the README has to explain).
+until the code repo's README is rewritten. Step 3 has now landed, so the
+precondition for that rewrite is met: the custody model is what the README has
+to explain, and it now exists.
