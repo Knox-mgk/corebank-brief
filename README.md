@@ -13,8 +13,9 @@ a status board useful — none of it is reachable by anyone, there is no running
 instance, and §3 sets out why no real money can move until a licensed partner
 signs.
 
-**Last synced with the code:** 2026-10-12, commit `714c7a9`.
-**Suite at that commit:** 258 tests, 0 failures.
+**Last synced with the code:** 2026-10-21, commit `3e1f283`.
+**Suite at that commit:** 291 unit tests + 451 live assertions, 0 failures,
+0 resource warnings under `-W always::ResourceWarning`.
 
 ---
 
@@ -193,8 +194,8 @@ under a higher one. Each step ends with a green suite and a commit.
 | # | step | status |
 |---|---|---|
 | 1 | Tenancy migration (schema v6) | **done** |
-| 2 | Tenant-scoped reads and writes + second-org attack test | **half done — in flight** |
-| 3 | Pooled settlement + the custody invariant | not started |
+| 2 | Tenant-scoped reads and writes + second-org attack test | **done** |
+| 3 | Pooled settlement + the custody invariant | **next** |
 | 4 | Inbound: virtual accounts + collections webhook | not started |
 | 5 | Outbound webhooks: signing, retries, dead-letter, replay | not started |
 | 6 | KYC tiers + limit intersection | not started (research done) |
@@ -206,20 +207,39 @@ under a higher one. Each step ends with a green suite and a commit.
 31 tests, including an upgrade from the old schema seeded with raw SQL and real
 money in it.
 
-**Step 2 — half done, and the half that is missing is the dangerous half.**
-Landed: a scoped tenant handle, with the data layer taking the tenant predicate
-explicitly so a query that forgets it shows up in the diff; refusals are 404
-rather than 403. Not landed, verified broken as of 2026-10-12:
+**Step 2 — done as of 2026-10-21, and the dangerous half is now the tested
+half.** Landed: a scoped tenant handle, with the data layer taking the tenant
+predicate explicitly so a query that forgets it shows up in the diff; refusals
+are 404 rather than 403, because distinguishing "not yours" from "does not
+exist" is itself a disclosure.
 
-- **The policy read and write paths are not tenant-filtered.** Reproduced with
-  real money: organisation B raised organisation A's agent ceiling from 1,000 to
-  39,000 NGN, and A's agent then moved 35,000 against a 1,000 limit. That is the
-  exact inverse of the product's central claim.
-- The reconciliation listing is not filtered — B can see A's flagged payouts.
-- Asking for another tenant's user balance raises a database integrity error
-  instead of a clean 404, which leaks existence through the error shape.
-- **No second-organisation attack test exists yet.** Nothing in the suite
-  asserts tenant isolation, which is why the above survived a green run.
+Four holes were open on 2026-10-12 and are now closed, each pinned by a test
+that fails if the scoping is removed:
+
+- **The policy read and write paths were not tenant-filtered.** Reproduced with
+  real money at the time: organisation B raised organisation A's agent ceiling
+  from 1,000 to 39,000 NGN, and A's agent then moved 35,000 against a 1,000
+  limit — the exact inverse of the product's central claim. Scoping now lives on
+  the METHOD rather than in the HTTP router, so the library beneath the API is
+  safe on its own; the router's check is defence in depth.
+- The reconciliation listing was unfiltered — B could see A's flagged payouts.
+  Platform scope is now an explicit branch rather than an absent predicate, so
+  a tenant-scoped caller cannot silently inherit deployment-wide reach.
+- Asking for another tenant's user balance raised a database integrity error
+  instead of a clean 404, leaking existence through the error shape.
+- **No second-organisation attack test existed**, which is why the above
+  survived a green run. There are now 13, attacking through the bare service
+  handle rather than over HTTP — an HTTP-only isolation test certifies the
+  router, not the code that will outlive it.
+
+The same audit found four further bugs the green suite could not see, plus a
+socket leak on every refused provider call that only appears under
+`-W always::ResourceWarning`. Both repos now run 0 resource warnings.
+
+A related hole was found and fixed in **aibank**, the single-tenant parent:
+new users defaulted to organisation `owner`, letting any account holder read
+and rewrite another's agent limits. Same class of bug, same fix at the method
+rather than the router.
 
 Carried over from aibank and explicitly not to be rebuilt: spend controls, the
 MCP server, TOTP second factor, the hold sweeper, verified backups, and the
@@ -229,22 +249,27 @@ deployment artifacts.
 
 ## 6. What is next
 
-**Immediately, in this order — all of it is step 2:**
+**Step 2 is done. Step 3 — pooled settlement and the custody invariant — is
+next, and it is the step the whole custody decision in §3 exists to serve:**
 
-1. Write the second-organisation attack test first, so the breakage is pinned by
-   a failing test before any fix is applied. It must 404 on every read, write,
-   list and approve.
-2. Filter the policy read and write paths by tenant.
-3. Filter the reconciliation listing.
-4. Replace the integrity-error refusal with a 404.
+1. An unexplained-difference account, so the gap between our ledger and the
+   partner's statement lands somewhere visible instead of being quietly
+   absorbed.
+2. Reconciliation against the partner as the external system of record — the
+   partner, not us, is the authority on what a balance is.
+3. A reconciliation command that exits non-zero when there is a difference, so
+   cron alerts without anyone parsing its output, and that refuses to
+   self-correct. Auto-agreeing the books with the bank is how a shortfall
+   becomes invisible.
 
-Nothing in steps 3–8 is safe to build until that lands: cross-tenant writes
-beneath a pooled balance are how one tenant spends another tenant's money.
+Step 2's isolation work is what made this safe to start: cross-tenant writes
+beneath a pooled balance are how one tenant spends another tenant's money, and
+until the attack test existed nothing in a green suite would have reported it.
 
-**Then step 3, the custody invariant**, which is the first step that is about
-corebank's own reason to exist rather than about tenancy hygiene: the
-`settlement:pooled` account, the `reconciliation:unexplained` account, the
-provider-fee account, and a reconciliation command that exits non-zero.
+**The real blocker is not code.** §3 picks the sponsored shape, which needs a
+licensed partner to sign before any of this can hold a naira. No amount of
+engineering substitutes for that signature, and it is the item that will still
+be blocking when every one of the eight steps is green.
 
 ### Blocked on a decision or on something outside the code
 
