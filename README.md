@@ -13,8 +13,8 @@ a status board useful — none of it is reachable by anyone, there is no running
 instance, and §3 sets out why no real money can move until a licensed partner
 signs.
 
-**Last synced with the code:** 2026-10-21, commit `4f35c3f`.
-**Suite at that commit:** 342 unit tests + 451 live assertions, 0 failures,
+**Last synced with the code:** 2026-10-22, commit `edde577`.
+**Suite at that commit:** 435 unit tests + 507 live assertions, 0 failures,
 0 resource warnings under `-W always::ResourceWarning`.
 
 ---
@@ -197,7 +197,7 @@ under a higher one. Each step ends with a green suite and a commit.
 | 1 | Tenancy migration (schema v6) | **done** |
 | 2 | Tenant-scoped reads and writes + second-org attack test | **done** |
 | 3 | Pooled settlement + the custody invariant | **done** |
-| 4 | Inbound: virtual accounts + collections webhook | not started — identity is a prerequisite, see below |
+| 4 | Inbound: virtual accounts + collections webhook, and identity capture pulled forward | **done** |
 | 5 | Outbound webhooks: signing, retries, dead-letter, replay | not started |
 | 6 | KYC tiers + limit intersection | not started (research done; storage half is now a step-4 dependency) |
 | 7 | Org-scoped fees replacing the single schedule | not started |
@@ -250,7 +250,45 @@ deployment artifacts.
 
 ## 6. What is next
 
-**Steps 2 and 3 are done. Step 4 — inbound money — is next.**
+**Steps 2, 3 and 4 are done. Step 5 — outbound webhooks — is next.**
+
+### Step 4 shipped 2026-10-22: money can now arrive, and parked money has an owner
+
+Each customer can be issued account details to pay into; a collections webhook
+credits the right wallet; and money that cannot be attributed is **held**
+rather than dropped or guessed at. Identity capture came with it, because the
+probe below proved it is a prerequisite rather than a later refinement.
+
+The finding worth carrying is a column that could not name a human. `who
+resolved this parked payment` was first written as a foreign key to the users
+table — the obvious, correct-looking choice. It is wrong, and a green test
+suite would never have said so: the person who resolves parked money is an
+operator at the command line, who has no row in that table at all. The key
+therefore guarantees one of exactly two failures on the only path that ever
+attributes money — a null actor, or an integrity error that aborts the
+transfer itself. The column created to answer "who decided this" would have
+been empty precisely when an auditor asked. It now stores a qualified
+principal with no constraint, because naming a human the system does not
+employ is the entire point. The audit log had the identical hole one layer
+down and took the same fix.
+
+Three smaller decisions in the same shape:
+
+1. **Why money was parked is its own field**, not borrowed from the provider's
+   narration. That narration is often the only clue to who sent the payment,
+   so overloading it destroys the evidence needed to resolve the very row it
+   describes.
+2. **Resolving a payment by hand re-runs the identity limit check.** Hand
+   attribution is the obvious back door around a tier cap, so it is refused by
+   default; the override needs the owner role and a written reason, and it is
+   recorded as an override rather than as a normal credit. An override that
+   logs like an ordinary credit is not an override, it is a hole with
+   paperwork.
+3. **Unattributed money is a real ledger position**, so the custody invariant
+   from step 3 still balances while the owner is unknown.
+
+435 unit tests (93 new) and six live smoke suites pass, with negative controls
+run on each new guard.
 
 ### Step 3 shipped 2026-10-21: the custody invariant can now fail
 
@@ -306,9 +344,9 @@ probe of the provider's sandbox says the dependency runs the other way:
   wallet address: it cannot hold a recurring balance, so it does not satisfy
   the inbound requirement on its own.
 
-So step 4 splits. The checkout variant is buildable now; per-customer account
-details need step 6's storage half landed first. The limit intersection stays
-at step 6.
+So step 4 split, and both halves have now landed: identity capture came first,
+and permanent per-customer account details issue on top of it. The limit
+intersection stays at step 6.
 
 Two further findings worth recording, because both would have surfaced as
 confusing failures later rather than as design facts now. The sandbox mints
