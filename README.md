@@ -13,8 +13,8 @@ a status board useful — none of it is reachable by anyone, there is no running
 instance, and §3 sets out why no real money can move until a licensed partner
 signs.
 
-**Last synced with the code:** 2026-10-22, commit `edde577`.
-**Suite at that commit:** 435 unit tests + 507 live assertions, 0 failures,
+**Last synced with the code:** 2026-10-23, commit `bc0cdd8`.
+**Suite at that commit:** 514 unit tests + 540 live assertions, 0 failures,
 0 resource warnings under `-W always::ResourceWarning`.
 
 ---
@@ -198,8 +198,8 @@ under a higher one. Each step ends with a green suite and a commit.
 | 2 | Tenant-scoped reads and writes + second-org attack test | **done** |
 | 3 | Pooled settlement + the custody invariant | **done** |
 | 4 | Inbound: virtual accounts + collections webhook, and identity capture pulled forward | **done** |
-| 5 | Outbound webhooks: signing, retries, dead-letter, replay | not started |
-| 6 | KYC tiers + limit intersection | not started (research done; storage half is now a step-4 dependency) |
+| 5 | Outbound webhooks: signing, retries, dead-letter, replay | **done** |
+| 6 | KYC tiers + limit intersection | **next** (research done; storage half landed with step 4) |
 | 7 | Org-scoped fees replacing the single schedule | not started |
 | 8 | Postgres | not started — blocks launch, not development |
 
@@ -250,7 +250,69 @@ deployment artifacts.
 
 ## 6. What is next
 
-**Steps 2, 3 and 4 are done. Step 5 — outbound webhooks — is next.**
+**Steps 2 through 5 are done. Step 6 — KYC tiers and the limit intersection —
+is next.**
+
+### Step 5 shipped 2026-10-23: corebank is now somebody else's provider
+
+Being the platform means inheriting every obligation corebank currently imposes
+on its own provider: sign the exact bytes sent, carry a stable event id, retry,
+expose a dead letter, and allow a replay. That is what landed — 77 tests
+against a real local HTTP receiver rather than a mock, because a mock proves
+the code calls a function and nothing about what crosses the wire.
+
+The guarantee that justifies the module is narrower than it sounds. A
+**duplicate** event is something any integrator can catch for themselves using
+the event id. A **missing** event is not — silence looks exactly like nothing
+having happened, and the first time anyone notices is a customer asking where
+their money went. So every event carries a sequence number that is monotonic
+per organisation and shared by all of that organisation's endpoints, which
+makes a gap provable from the receiving side. Numbering per endpoint instead
+would have been the obvious choice and would have destroyed the only property
+worth having.
+
+Four decisions in the same shape:
+
+1. **A destination is checked by resolved IP address, not by hostname.** Only
+   https, no query string, and loopback, private and link-local ranges are
+   refused — a public-looking name can resolve to the cloud metadata address,
+   which hands out the server's own credentials. Redirects are refused rather
+   than followed, because a redirect is precisely how an allowed public URL
+   becomes an attack on our own infrastructure.
+2. **The signing secret is shown exactly once and sealed at rest** under the
+   same key material as the second-factor secrets. It never appears in a
+   listing, an audit row or a delivery record: a stolen database dump must not
+   confer the ability to forge corebank's own webhooks. A secret that will not
+   unseal is dead-lettered immediately rather than retried, because retrying
+   cannot help and would bury the real incident under a delivery failure.
+3. **The event is written inside the money transaction; the HTTP call is not.**
+   An event therefore rolls back with the payment it describes and can never
+   announce a credit that did not happen — while a slow integrator endpoint can
+   never hold a lock on the ledger.
+4. **A 4xx is retried too, and everything is bounded** (8 attempts, backing off
+   to an hour, then dead). A client error usually means an integrator just
+   deployed a broken handler and will fix it within the hour; refusing to retry
+   converts their short outage into permanent data loss. Bounded, because
+   hammering a genuinely wrong URL forever is a self-inflicted outage with our
+   name on it.
+
+Replay resends the stored bytes verbatim and refuses an event that already
+succeeded; re-serialising would change the signature and prove nothing about
+what was originally sent. Isolation is attacked through the internal service
+handle rather than over HTTP: no organisation can list, rotate, disable or
+replay another's endpoints, and a test-environment event cannot reach a live
+endpoint.
+
+**The step also found a bug in the test infrastructure that had nothing to do
+with webhooks, and it is the more instructive half.** The suite's throwaway
+databases were only cleaned up when the process exited, so a full run needed
+every one of them to exist simultaneously — roughly 280 MB. On a development
+machine with a full disk the run died partway through and reported 269
+failures, every one of which looked like a product regression and none of which
+were. The rule extracted: when a wall of identical failures has its deepest
+stack frame inside the standard library rather than in product code, it is the
+environment failing, not the product. Read the innermost frame before believing
+a test count.
 
 ### Step 4 shipped 2026-10-22: money can now arrive, and parked money has an owner
 
@@ -373,9 +435,12 @@ be blocking when every one of the eight steps is green.
 - **A Nigerian fintech lawyer** needs to confirm the B1 position before anything
   touches real money.
 - **A CAC-registered company** is a precondition for partner KYB.
-- **Live payout rails are unproven even on aibank**: the real provider returns
-  "Please enable IP Whitelisting" on transfers. Reads are proven live; writes are
-  not. Needs a fixed egress address — a phone on CGNAT cannot be whitelisted.
+- **Live payout rails are still unproven, but the blocker MOVED on 2026-10-23.**
+  From a fixed egress address the provider no longer answers "Please enable IP
+  Whitelisting" — it answers "merchant is not enabled to make transfers". The
+  network-level obstacle is cleared; what remains is an account entitlement the
+  provider must switch on after compliance review. Reads are proven live (598
+  banks, balance, account resolution); writes are refused at the account level.
 - **Postgres (step 8)** blocks launch and nothing before it. The current write
   path holds a process-global lock, so correctness depends on exactly one
   process existing — acceptable for a single-tenant deployment, an availability
