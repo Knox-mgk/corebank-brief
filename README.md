@@ -13,9 +13,9 @@ a status board useful — none of it is reachable by anyone, there is no running
 instance, and §3 sets out why no real money can move until a licensed partner
 signs.
 
-**Last synced with the code:** 2026-10-23, commit `bc0cdd8`.
-**Suite at that commit:** 514 unit tests + 540 live assertions, 0 failures,
-0 resource warnings under `-W always::ResourceWarning`.
+**Last synced with the code:** 2026-10-27, commit `b6118f8`.
+**Suite at that commit:** 549 unit tests, 0 failures, 0 resource warnings
+under `-W always::ResourceWarning`.
 
 ---
 
@@ -199,9 +199,20 @@ under a higher one. Each step ends with a green suite and a commit.
 | 3 | Pooled settlement + the custody invariant | **done** |
 | 4 | Inbound: virtual accounts + collections webhook, and identity capture pulled forward | **done** |
 | 5 | Outbound webhooks: signing, retries, dead-letter, replay | **done** |
-| 6 | KYC tiers + limit intersection | **next** (research done; storage half landed with step 4) |
+| 6 | KYC tiers + limit intersection | **done** (inbound, step 4) and **outbound** (step 7's commit) |
 | 7 | Org-scoped fees replacing the single schedule | not started |
 | 8 | Postgres | not started — blocks launch, not development |
+
+**Deployed alongside the build, 2026-10-27: a public TLS edge.** Not a build
+step, but it gated everything inbound. The service had run loopback-only since
+deployment, so the collections webhook of step 4 was a code path with no
+possible caller. A dedicated subdomain now terminates TLS and proxies **exactly
+one path** — the collections webhook — while every other route, including the
+dashboard and the admin API, returns 404 from the internet and is reachable
+only through an SSH tunnel. A path that is not routed cannot be enumerated.
+Verified from off-box with five negative controls (unsigned, forged hash,
+valid HMAC over a different body, wrong secret, spoofed forwarding header)
+before any positive one: 11 of 11.
 
 **Step 1 — done.** `organizations`, `organization_members`, `customers` and an
 `environment` column; `organization_id` denormalised onto every scoped table.
@@ -250,8 +261,24 @@ deployment artifacts.
 
 ## 6. What is next
 
-**Steps 2 through 5 are done. Step 6 — KYC tiers and the limit intersection —
-is next.**
+**Steps 1 through 6 are done, and step 7's commit closed the outbound half of
+the KYC gate. The next code step is org-scoped fees.**
+
+The real blocker is not code. Two items sit outside the repo and no amount of
+engineering moves either:
+
+1. **The payout product is not enabled on the provider account.** A live
+   transfer attempt returns `400 "merchant is not enabled to make transfers"`
+   — the IP whitelist is satisfied, the key authenticates, and the refusal is
+   an account entitlement the provider grants after compliance review. Nothing
+   in this repo changes that answer.
+2. **The webhook URL is not yet registered in the provider dashboard.** The
+   edge is live and verified, but until the URL is pasted in, zero real
+   deliveries arrive — so inbound settlement is proven correct and still
+   untested against actual provider traffic.
+
+Nothing is deployed for public use, nothing holds customer money, and there is
+no production instance.
 
 ### Step 5 shipped 2026-10-23: corebank is now somebody else's provider
 
