@@ -13,9 +13,10 @@ a status board useful — none of it is reachable by anyone, there is no running
 instance, and §3 sets out why no real money can move until a licensed partner
 signs.
 
-**Last synced with the code:** 2026-10-27, commit `b6118f8`.
-**Suite at that commit:** 549 unit tests, 0 failures, 0 resource warnings
-under `-W always::ResourceWarning`.
+**Last synced with the code:** 2026-11-04, commit `dd03b19`.
+**Suite at that commit:** 563 unit tests + 451 live assertions
+(74 HTTP + 82 MCP + 139 dashboard + 65 MFA + 91 DOM), 0 failures, re-run on
+2026-11-04.
 
 ---
 
@@ -199,8 +200,8 @@ under a higher one. Each step ends with a green suite and a commit.
 | 3 | Pooled settlement + the custody invariant | **done** |
 | 4 | Inbound: virtual accounts + collections webhook, and identity capture pulled forward | **done** |
 | 5 | Outbound webhooks: signing, retries, dead-letter, replay | **done** |
-| 6 | KYC tiers + limit intersection | **done** (inbound, step 4) and **outbound** (step 7's commit) |
-| 7 | Org-scoped fees replacing the single schedule | not started |
+| 6 | KYC tiers + limit intersection | **done** (inbound, step 4) and **outbound** (`ef17017`) |
+| 7 | Org-scoped fees replacing the single schedule | not started — **next** |
 | 8 | Postgres | not started — blocks launch, not development |
 
 **Deployed alongside the build, 2026-10-27: a public TLS edge.** Not a build
@@ -279,6 +280,33 @@ engineering moves either:
 
 Nothing is deployed for public use, nothing holds customer money, and there is
 no production instance.
+
+### Found 2026-11-04: the fork had silently regressed three of aibank's authorisation fixes
+
+The reason to record this is that it is a **class** of bug a fork creates and
+a green suite cannot see. aibank fixed three cross-user authorisation holes
+after the fork point. corebank's suite was 549 green at the time, so nothing
+pointed at them — but the holes were back, because the fixes landed upstream on
+methods corebank had already rewritten for tenancy.
+
+Proved by probe before fixing, in corebank's own library (not over HTTP):
+
+- **Agent limits.** One account holder could raise another's agent ceiling and
+  freeze their agent. This is the exact inverse of the product's central claim,
+  and it was the headline bug aibank fixed on 2026-10-21.
+- **`freeze_agent`** took no owner check at all.
+- **Payout approve and reject** reported another user's payout status before
+  refusing, which both discloses the row and lets a stranger drive someone
+  else's approval queue.
+
+All three are now checked on the **method**, under the same ownership rule the
+tenancy scoping uses, with a 14-assertion cross-user isolation test that fails
+when any one guard is removed. Full suite 563 green afterwards.
+
+The lesson, kept because the next fork will repeat it: **a fork inherits bugs
+but not fixes.** A fix applied upstream after the fork point does not exist
+downstream, and if the downstream copy rewrote that method for its own reasons,
+no merge conflict will ever tell you.
 
 ### Step 5 shipped 2026-10-23: corebank is now somebody else's provider
 
@@ -475,6 +503,11 @@ be blocking when every one of the eight steps is green.
 
 ### Known traps, recorded so they are not rediscovered
 
+- **A fork inherits bugs but not fixes.** Three authorisation fixes applied to
+  aibank after the fork point were absent here and invisible to a 549-green
+  suite (see §6). Any fix landing upstream has to be checked against this tree
+  by hand, because tenancy rewrote the methods the fixes live on and git will
+  report no conflict.
 - Idempotency keys are scoped per **organisation** now. A global key namespace
   returns someone else's payout record.
 - Fail closed on the absence of a **bound**, never the absence of a row. The
@@ -500,9 +533,17 @@ be blocking when every one of the eight steps is green.
 
 ## 7. Note on the code repo's own README
 
-`Knox-mgk/corebank`'s `README.md` is still aibank's, describing a self-hosted
-deployment that never holds money. That contradicts §1 and §3 above and is a
-known stale document — **this brief is the accurate description of the shape**
-until the code repo's README is rewritten. Step 3 has now landed, so the
-precondition for that rewrite is met: the custody model is what the README has
-to explain, and it now exists.
+**Fixed on 2026-11-04 (`dd03b19`).** This section used to say that
+`Knox-mgk/corebank`'s `README.md` was still aibank's — describing a self-hosted
+deployment that never holds money, contradicting §1 and §3 above — and that
+this brief was the accurate description until it was rewritten.
+
+That rewrite has now landed. The code repo's README opens with the BaaS shape,
+the pooled balance, the custody consequence and the build-order position, and
+it marks the inherited single-tenant sections as exactly that. The two
+documents now agree, and `docs/architecture.md` remains the authority on the
+regulatory shape.
+
+One contradiction was found and fixed in both at the same time: both READMEs
+told a reader to install over public HTTPS from a repo that has been private
+since 2026-10-21, so the first command anyone ran 404'd.
