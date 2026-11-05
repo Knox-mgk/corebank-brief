@@ -756,10 +756,28 @@ this brief was the accurate description until it was rewritten.
 
 That rewrite has now landed. The code repo's README opens with the BaaS shape,
 the pooled balance, the custody consequence and the build-order position, and
-it marks the inherited single-tenant sections as exactly that. The two
-documents now agree, and `docs/architecture.md` remains the authority on the
-regulatory shape.
+it marks the inherited single-tenant sections as exactly that.
+`docs/architecture.md` remains the authority on the regulatory shape.
 
 One contradiction was found and fixed in both at the same time: both READMEs
 told a reader to install over public HTTPS from a repo that has been private
 since 2026-10-21, so the first command anyone ran 404'd.
+
+**The claim that the two documents "now agree" was itself an overclaim, and an
+audit on 2026-11-05 (`8c63074`) measured the gap.** The header had been
+rewritten; the body had not. The code repo's README documented 28 of 55
+routes, omitted 12 of 24 modules, and its "Known limits" still asserted that
+inbound collections were NOT IMPLEMENTED — 659 lines of `collections.py`, six
+routes, a webhook and 56 live assertions after they shipped. This brief
+documented all six of the subsystems the code repo's README did not mention at
+all, so for three weeks the PUBLIC document was the more accurate one about a
+PRIVATE repo's contents.
+
+The lesson is structural rather than about either document. A brief carries a
+pinned code sha, so its staleness is visible; a README carries no such marker,
+so nothing forces a re-read and a doc written at step 5 silently describes a
+smaller system as the code grows past it. Treat the agreement between these
+two documents as something to re-measure mechanically — enumerate routes from
+the dispatcher, list the package's modules, re-read every "not implemented"
+sentence against the module that now exists — not as something a single
+rewrite settles.
