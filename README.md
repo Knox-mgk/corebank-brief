@@ -7,16 +7,23 @@ implementation. The code is at
 private**, and it will 404 for you unless you are the author. This brief is
 public so the design can be read and discussed; the implementation is not.
 
-**Nothing described here is deployed, and it holds no money.** The status board
-in §5 lists unfinished and known-broken work openly because that is what makes
-a status board useful — none of it is reachable by anyone, there is no running
-instance, and §3 sets out why no real money can move until a licensed partner
-signs.
+**Nothing described here holds customer money, and nothing is open to the
+public.** One instance is installed on the author's own VPS. It binds to
+loopback and is reachable only through an SSH forward, except for **exactly one
+public path** — the provider's collections webhook, behind TLS and HMAC — while
+every other route, including the dashboard and the admin API, returns 404 from
+the internet (§5). The service is currently stopped, and that installed copy is
+18 commits behind what this brief describes. The status board in §5
+lists unfinished and known-broken work openly because that is what makes a
+status board useful, and §3 sets out why no real money can move until a licensed
+partner signs.
 
-**Last synced with the code:** 2026-11-04, commit `dd03b19`.
-**Suite at that commit:** 563 unit tests + 451 live assertions
-(74 HTTP + 82 MCP + 139 dashboard + 65 MFA + 91 DOM), 0 failures, re-run on
-2026-11-04.
+**Last synced with the code:** 2026-11-05, commit `575eaa8`.
+**Suite at that commit:** 921 unit tests, 0 failures, re-run on 2026-11-05 on
+the author's phone (395s) under `-W always::ResourceWarning` with 0 warnings.
+Plus live assertions against real servers, all re-run the same day: 76 HTTP,
+82 MCP, 144 dashboard, 65 MFA, 107 DOM, 56 inbound, and a 123-assertion
+15-phase lifecycle simulation.
 
 ---
 
@@ -132,15 +139,19 @@ a partner adapter, not the ledger.
 ```
 platform (us)
 └── organization            a fintech customer; the tenancy root
+    ├── parent_organization  OPTIONAL: a holding company above it (one level)
     ├── members (users)     humans: owner / admin / developer / viewer
     ├── api_keys            sk_live_* / sk_test_*, scoped to ONE environment
     ├── webhook_endpoints   where WE call THEM, with their signing secret
     ├── fee_schedule        per-organisation pricing
+    ├── org_accounts        the entity's OWN books: operating / intercompany / expense
+    ├── provider_config     who this entity is to a provider, and where its money lands
+    ├── invoices            what it has billed its counterparties
     └── customers           the organisation's END users
         ├── kyc_record      tier, evidence, verification state
         ├── accounts        sub-ledger balances (one per currency)
-        │   ├── virtual_account   a dynamic NUBAN for inbound money
-        │   └── postings          immutable, the only source of balance
+        │   ├── virtual_account   a NUBAN for inbound money
+        │   └── postings          immutable (by TRIGGER), the only source of balance
         ├── agents          OPTIONAL: AI principals with spend policy
         └── payouts         outbound money, with holds
 ```
@@ -159,6 +170,101 @@ Three things here are load-bearing:
   because two deployments drift and a sandbox that behaves differently from
   production is worse than no sandbox. Test money is posted by a fake provider
   and can never reach a real rail.
+
+### Group structure: a holding company and its subsidiaries
+
+An organisation may have a parent, **one level only** — deliberately, because a
+nesting depth no code reads is not inert, it is a lie in waiting. What the group
+work adds is three things an entity holds in its own name:
+
+- **`org_accounts`** in three purposes: `operating` (its own money),
+  `intercompany` (what it owes or is owed by a sibling) and `expense` (recorded,
+  unremitted cost). Operating and intercompany are deliberately **separate
+  accounts** — they used to share one kind, which meant every intercompany
+  transfer was two legs against a single account: perfectly balanced, and moving
+  nothing.
+- **Intercompany transfers** as two entries, one per entity's own books. The
+  ledger still refuses legs that straddle two organisations, so no path here
+  grants one subsidiary write access to another's balance.
+- **`consolidation_scope`**: a holding company's owner may *read* a subsidiary's
+  figures. Statements, consolidated reporting and recurring expenses are all
+  derived from postings at call time — nothing is cached, so nothing can drift
+  from the ledger backing it.
+
+The asymmetry between those last two is the point and is defended by a test:
+consolidation scope is a **read** privilege and must never widen into a write
+one. A provider configuration is not a figure — rewriting it redirects where
+that subsidiary's revenue *arrives* — so the parent is refused there with the
+same `CrossTenant` a sibling gets. Letting "I may read your books" silently mean
+"I may change where your money lands" is the exact read-scope/write-scope
+collapse the design refuses.
+
+### Invoices, and what happens to money that arrives
+
+An entity can bill a counterparty, mint a payment reference, and have an
+inbound collection **matched to the invoice** that quoted it. The decisions
+worth recording are all about refusing to guess:
+
+- **An overpayment is not stored on the invoice.** There is no `overpaid`
+  status: an excess is not part of the obligation, and putting it inside the
+  invoice puts it somewhere no queue watches. The invoice is simply `paid` and
+  the excess is **parked** in a platform account that reconciliation reports and
+  a queue surfaces.
+- **The provider's fee is not netted off the applied amount.** The counterparty
+  paid in full; the partner's cut is our cost of collecting. Netting it would
+  leave every invoice permanently short by the fee and make `part_paid` the
+  normal end state of a fully paid bill.
+- **A duplicate payment is neither refused nor dropped.** It has already
+  arrived, so it cannot be refused; nobody is owed it, so it cannot be credited;
+  dropping it would make the pool disagree with the partner forever. Nothing is
+  applied and the whole amount parks.
+- **One payment naming two entities parks too** — a quoted invoice of one
+  subsidiary arriving at a NUBAN belonging to another. Picking the invoice
+  credits an entity that may not be the intended recipient; picking the wallet
+  ignores an instruction the payer gave. Either is moving money between two
+  entities' books on a guess.
+
+`invoice-drift` re-derives the cached totals from postings and **reports**
+without repairing, with the same two correct answers every reconciliation check
+here has: empty, or act now. Its `limit` parameter was silently ignored and was
+fixed by **removing** it — a capped report returns 200 rows while the 201st
+fault goes unmentioned, and the cron reading the exit code sees the same number
+either way.
+
+### Who we are to a provider, per entity
+
+"Which provider is this, and who are we to it" used to be a process-wide fact
+read out of an environment variable. For a group that is wrong in a way that
+costs real money: each entity signs its **own** agreement, holds its **own**
+merchant identifier, and expects settlement in its **own** operating account —
+and none of those three facts had anywhere to live, so the destination of
+incoming money was decided by convention at the call site.
+
+It is a row now, with an **append-only revision log** (enforced by trigger, in
+the shape the postings table uses), so a rotation cannot be made to look like it
+never happened. Two refusals define the surface:
+
+- **There is no secret column here.** A merchant identifier is not a secret —
+  the provider prints it on every settlement advice — but the key that
+  *authenticates* as that merchant is. Adding an `api_key TEXT` would put live
+  provider credentials in every backup, in `backup --verify` output, and one
+  careless `SELECT *` away from an audit log. The authenticating key stays in
+  the environment of whichever process is authorised to move money. **This table
+  says who we are; it does not say how to prove it.**
+- **Reads are not at a lower bar than writes**, which is the one place this
+  codebase inverts its own habit. A merchant identity is the handle a payer
+  quotes and the string an attacker needs to forge a settlement advice, so
+  "which merchant id does my sibling use" is not a reporting question. Both read
+  and write answer 404, never 403, so neither can be used as an existence oracle
+  over another entity's banking arrangements.
+
+A settlement account must be an account the **same** organisation holds in its
+own name, checked against `org_accounts` rather than `organization_id` alone —
+both catch a sibling's account, but only the index catches a wallet, a platform
+custody account, or a legacy row carrying the right id that is not an account
+the entity holds. And a merchant identity may be claimed by only **one** active
+configuration, because a settlement advice names a merchant, not an
+organisation, and two claimants means two valid destinations for real money.
 
 ### Five trust domains
 
@@ -200,9 +306,31 @@ under a higher one. Each step ends with a green suite and a commit.
 | 3 | Pooled settlement + the custody invariant | **done** |
 | 4 | Inbound: virtual accounts + collections webhook, and identity capture pulled forward | **done** |
 | 5 | Outbound webhooks: signing, retries, dead-letter, replay | **done** |
-| 6 | KYC tiers + limit intersection | **done** (inbound, step 4) and **outbound** (`ef17017`) |
+| 6 | KYC tiers + limit intersection | **done**, inbound and outbound |
 | 7 | Org-scoped fees replacing the single schedule | not started — **next** |
 | 8 | Postgres | not started — blocks launch, not development |
+
+Work that was not on the eight-step order and landed anyway, each closing a
+section of the group directive:
+
+| | state |
+|---|---|
+| Ledger append-only in the **database** (triggers), not just in the code | **done** (migration 12) |
+| Group structure: subsidiaries, `org_accounts`, intercompany transfers, consolidation scope | **done** (§2.1, migration 14) |
+| Invoices and invoice-matched collections | **done** (§2.2) |
+| Subsidiary statements, consolidated reporting, recurring expenses | **done** (§2.3, migration 16) |
+| Per-organisation provider identity and settlement arrangement | **done** (§2.4, migration 17) |
+| CoreBank as a payout provider for an external platform | **done** (§4) |
+| Payout lifecycle hardening: no second debit, no silent hold, no leaked conflict | **done** (migration 12) |
+| Restore drill that is honest about a schema bump | **done** |
+| Platform-admin role collapse and owner-scoped agent authority | **done** — both were live holes |
+| Dashboard: a readable ledger view, and the backup half nothing automated | **done** |
+| CSP: the inline block authorised by a per-response nonce, not `'unsafe-inline'` | **done** |
+| Payout provider **selected explicitly**, never inferred from a credential | **done** |
+| `connect()` closes its handle when the file turns out to be unreadable | **done** 2026-11-05 |
+| Deployed on the author's VPS, one public path (collections webhook) | installed, **currently stopped**, and **18 commits behind** (schema 11 vs 17) |
+
+Nothing is reachable by a customer, and the pooled balance is a sandbox figure.
 
 **Deployed alongside the build, 2026-10-27: a public TLS edge.** Not a build
 step, but it gated everything inbound. The service had run loopback-only since
@@ -247,7 +375,39 @@ that fails if the scoping is removed:
 
 The same audit found four further bugs the green suite could not see, plus a
 socket leak on every refused provider call that only appears under
-`-W always::ResourceWarning`. Both repos now run 0 resource warnings.
+`-W always::ResourceWarning`.
+
+**The resource-warning check then found a third leak, on 2026-11-05, and the
+interesting part is why it was nearly dismissed.** `db.connect()` opens the
+file and then issues four PRAGMAs — and those PRAGMAs are the first *reads*, so
+a corrupt or truncated database raises there: after the handle exists, before
+the caller receives it. Nobody can close a connection they were never given, so
+the descriptor and its WAL sidecar survived until the garbage collector ran,
+and the warning was then printed against whatever source line happened to
+trigger collection. It blamed a file in the standard library. Both repos now
+close the handle on the failure path, with a four-assertion test — including a
+negative control proving the leak detector can fail, and an end-to-end check
+through the restore drill, which is the only caller that opens
+deliberately-unreadable files by design.
+
+The lesson is about diagnostics, not about sqlite: **a resource warning names
+the line where collection happened, not the line that leaked.** A leak reported
+inside unrelated code is the normal presentation, so "that warning is from a
+dependency" is the wrong conclusion to reach cheaply — `-X tracemalloc` names
+the real allocation site in one run.
+
+**And then the guard against the first leak turned out to be scanning the wrong
+half of the repo.** The AST sweep that has pinned "never read an `HTTPError`
+body without closing it" since the original socket leak only ever walked the
+package directory. Eighteen handlers in `tests/` and `scripts/` were still
+leaking — and those leak harder than the package ones ever did, because a smoke
+script's request helper runs on *every* refusal the script asserts. One test
+helper alone accounted for 30 resource warnings in a full suite run; the count
+is 0 now, and the sweep walks the package, `tests/`, `scripts/` and
+`scripts/dev/`. Test and script helpers are also exactly the code a human
+copies when writing the next adapter, so excluding them guarded the half that
+mattered least. **A guard is only as good as its scope, and nothing re-checks
+the scope once the guard is green.**
 
 A related hole was found and fixed in **aibank**, the single-tenant parent:
 new users defaulted to organisation `owner`, letting any account holder read
@@ -307,6 +467,33 @@ The lesson, kept because the next fork will repeat it: **a fork inherits bugs
 but not fixes.** A fix applied upstream after the fork point does not exist
 downstream, and if the downstream copy rewrote that method for its own reasons,
 no merge conflict will ever tell you.
+
+### Found 2026-11-05 on *pushed* main: a merge deleted that fix, and the suite stayed green
+
+The sequel is worse than the original, because this time the fix existed in
+`git log` and not in the code. A merge resolution reordered
+`require_agent_authority` so the organisation-staff bypass was consulted
+*before* the caller's asserted identity — and that flag is true for the
+unauthenticated local handle every CLI, sweeper and library caller receives. A
+supplied `user_id` was therefore discarded entirely, and one account holder
+could again raise another's agent ceiling or freeze their agent through the
+bare library. Measured on the pushed commit: 2 of the 14 isolation assertions
+failed.
+
+The ordering *is* the fix. An explicit identity **narrows** authority and never
+widens it, so the identity check goes first and the bypass is reached only when
+no identity was asserted. The tenant's own `user_id` still outranks the
+argument — trusting the argument first would be no authorisation at all, since
+a caller would simply pass the victim's id.
+
+Two things generalise:
+
+- **A merge is a code change no review diff shows you.** The conflict
+  resolution *is* the edit, the file reads plausibly either way, and nothing
+  re-ran the one test file that attacks through the bare handle.
+- **The suite was green because the only test that could see it was not run.**
+  A security assertion that lives in exactly one file is a single point of
+  failure in the process, not just in the code.
 
 ### Step 5 shipped 2026-10-23: corebank is now somebody else's provider
 
@@ -528,6 +715,29 @@ be blocking when every one of the eight steps is green.
   carried positive-when-owed and the ledger sums to zero. The inversion lives
   in exactly one function; a second place that negates reports a shortfall as
   a surplus.
+- **A wall of failures is usually one broken harness, not N broken features.**
+  A new test file reported 528 errors; 265 of them were the harness itself — a
+  single self-referential fixture failing dozens of unrelated assertions at
+  once and making the product look broken in dozens of places. Debug the
+  harness to honesty *first*; the assertions that still fail afterwards are the
+  real findings, and there were several, because a harness written far enough
+  to fail is exercising paths nothing else did.
+- **A `-W always::ResourceWarning` run blames the collector, not the leak.** The
+  warning is printed wherever the GC happened to fire, which is routinely a
+  file in the standard library. Use `-X tracemalloc` before concluding the leak
+  belongs to someone else's code.
+- **Scope a structural guard to the whole repo, not to the package.** An AST
+  sweep that forbids a missing statement is only as good as the directories it
+  walks, and nothing re-checks that scope once it is green. Here it skipped
+  `tests/` and `scripts/` and missed eighteen live instances of the exact bug
+  it existed to prevent — in the helpers a human is most likely to copy.
+- **The demo seeder refuses to run as root**, because a convenience script that
+  writes a known-credentials database is a production incident waiting for the
+  one night somebody runs it on the server.
+- A credential is not an authorisation: the payout provider is **selected
+  explicitly**, never inferred from the presence of a key. Inferring it means a
+  pasted environment variable is the only thing between a deployment and real
+  money leaving a real account.
 
 ---
 
