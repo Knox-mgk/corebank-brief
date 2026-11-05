@@ -12,11 +12,10 @@ public.** One instance is installed on the author's own VPS. It binds to
 loopback and is reachable only through an SSH forward, except for **exactly one
 public path** — the provider's collections webhook, behind TLS and HMAC — while
 every other route, including the dashboard and the admin API, returns 404 from
-the internet (§5). The service is currently stopped, and that installed copy is
-18 commits behind what this brief describes. The status board in §5
-lists unfinished and known-broken work openly because that is what makes a
-status board useful, and §3 sets out why no real money can move until a licensed
-partner signs.
+the internet (§5). The service runs on that host at this brief's commit; the
+status board in §5 lists unfinished and known-broken work openly because that
+is what makes a status board useful, and §3 sets out why no real money can move
+until a licensed partner signs.
 
 **Last synced with the code:** 2026-11-05, commit `575eaa8`.
 **Suite at that commit:** 921 unit tests, 0 failures, re-run on 2026-11-05 on
@@ -328,7 +327,7 @@ section of the group directive:
 | CSP: the inline block authorised by a per-response nonce, not `'unsafe-inline'` | **done** |
 | Payout provider **selected explicitly**, never inferred from a credential | **done** |
 | `connect()` closes its handle when the file turns out to be unreadable | **done** 2026-11-05 |
-| Deployed on the author's VPS, one public path (collections webhook) | installed, **currently stopped**, and **18 commits behind** (schema 11 vs 17) |
+| Deployed on the author's VPS, one public path (collections webhook) | installed and **running** at this brief's commit, schema 17 |
 
 Nothing is reachable by a customer, and the pooled balance is a sandbox figure.
 
@@ -726,6 +725,13 @@ be blocking when every one of the eight steps is green.
   warning is printed wherever the GC happened to fire, which is routinely a
   file in the standard library. Use `-X tracemalloc` before concluding the leak
   belongs to someone else's code.
+- **A deployment that only ever pulls should hold a read-only, per-repo key.**
+  This host pulled with a key authorised against the whole account, so a
+  compromise of a box that never needs to write could have rewritten every
+  repo the author owns. It now uses a repo-scoped deploy key marked read-only,
+  verified by GitHub refusing a dry-run push rather than by trusting the
+  checkbox. A pull-only role should be unable to push even when the attacker
+  is root on the puller.
 - **Scope a structural guard to the whole repo, not to the package.** An AST
   sweep that forbids a missing statement is only as good as the directories it
   walks, and nothing re-checks that scope once it is green. Here it skipped
