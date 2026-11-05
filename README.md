@@ -17,7 +17,7 @@ status board in §5 lists unfinished and known-broken work openly because that
 is what makes a status board useful, and §3 sets out why no real money can move
 until a licensed partner signs.
 
-**Last synced with the code:** 2026-11-05, commit `8c63074`.
+**Last synced with the code:** 2026-11-05, commit `8c63074` (code repo HEAD).
 **Suite at that commit:** 924 unit tests, 0 failures, re-run on 2026-11-05 on
 the author's phone (560s) under `-W always::ResourceWarning` with 0 warnings.
 Plus 530 live assertions against real servers, all re-run the same day: 76
