@@ -17,9 +17,11 @@ status board in §5 lists unfinished and known-broken work openly because that
 is what makes a status board useful, and §3 sets out why no real money can move
 until a licensed partner signs.
 
-**Last synced with the code:** 2026-11-05, commit `8c63074` (code repo HEAD).
-**Suite at that commit:** 924 unit tests, 0 failures, re-run on 2026-11-05 on
-the author's phone (560s) under `-W always::ResourceWarning` with 0 warnings.
+**Last synced with the code:** 2026-11-11, commit `7e6ed31` (code repo HEAD).
+**Suite at that commit:** 985 unit tests, 0 failures, re-run on 2026-11-11 on
+the VPS (169s, `python3 -m unittest discover -s tests`). The phone can no
+longer run the suite — it needs ~280 MB of simultaneous scratch and the device
+is at 99% disk, which surfaces as a phantom ENOSPC rather than a test failure.
 Plus 530 live assertions against real servers, all re-run the same day: 76
 HTTP, 82 MCP, 144 dashboard, 65 MFA, 56 inbound, 107 DOM, 33 packaging, and a
 123-assertion 15-phase lifecycle simulation.
@@ -427,15 +429,24 @@ the KYC gate. The next code step is org-scoped fees.**
 The real blocker is not code. Two items sit outside the repo and no amount of
 engineering moves either:
 
-1. **The payout product is not enabled on the provider account.** A live
-   transfer attempt returns `400 "merchant is not enabled to make transfers"`
-   — the IP whitelist is satisfied, the key authenticates, and the refusal is
-   an account entitlement the provider grants after compliance review. Nothing
-   in this repo changes that answer.
-2. **The webhook URL is not yet registered in the provider dashboard.** The
-   edge is live and verified, but until the URL is pasted in, zero real
-   deliveries arrive — so inbound settlement is proven correct and still
-   untested against actual provider traffic.
+1. **The payout product refusal has moved one rung, and is now a dashboard
+   setting the account owner must make.** v3 answered `400 "merchant is not
+   enabled to make transfers"` — an account entitlement. The live account has
+   **no v3 key at all**; its live path is Flutterwave **v4 OAuth**, and v4
+   answers a different refusal: `400 TRANSFER_SOURCE_REQUIRED (216400)
+   "Kindly select your transfer source on the dashboard"`. That is progress —
+   the entitlement gate is no longer what refuses. But the dashboard exposes
+   no standalone transfer-source setting: the only source selector found is
+   inside the transfer wizard itself, where it reads **"no balance
+   available"**, and all 69 v4 wallets read 0.00. The working hypothesis is
+   that the source cannot be selected until the NGN wallet holds money, which
+   makes funding the prerequisite rather than a later step.
+2. **The webhook URL is registered.** The service's single public path is
+   saved as the V4 live hook (`whe_*`, status `enabled`) with the same secret
+   hash the service verifies against, confirmed by re-reading the form after a
+   fresh page load. The edge accepts a correctly signed v4
+   `flutterwave-signature` body with 200 and rejects a forged one with 401.
+   What remains untested is a real provider delivery, which needs (1).
 
 Nothing is deployed for public use, nothing holds customer money, and there is
 no production instance.
@@ -676,12 +687,18 @@ be blocking when every one of the eight steps is green.
 - **A Nigerian fintech lawyer** needs to confirm the B1 position before anything
   touches real money.
 - **A CAC-registered company** is a precondition for partner KYB.
-- **Live payout rails are still unproven, but the blocker MOVED on 2026-10-23.**
-  From a fixed egress address the provider no longer answers "Please enable IP
-  Whitelisting" — it answers "merchant is not enabled to make transfers". The
-  network-level obstacle is cleared; what remains is an account entitlement the
-  provider must switch on after compliance review. Reads are proven live (598
-  banks, balance, account resolution); writes are refused at the account level.
+- **Live payout rails are still unproven, but the blocker has moved TWICE.**
+  2026-10-23: from a fixed egress address the provider stopped answering
+  "Please enable IP Whitelisting" and started answering "merchant is not
+  enabled to make transfers" — a network obstacle replaced by an account one.
+  2026-11-11: the live account turns out to have **no v3 key at all**, so the
+  real path is v4 OAuth, which refuses with `TRANSFER_SOURCE_REQUIRED` —
+  "kindly select your transfer source on the dashboard". The entitlement wall
+  is no longer what answers. The dashboard has no standalone transfer-source
+  control; the only selector sits inside the transfer wizard and reads "no
+  balance available" against 69 wallets at 0.00, so **funding the NGN wallet
+  is now believed to be the prerequisite, not a later step.** Reads are proven
+  live (598 banks, balances, 69 wallets); writes stop at the source setting.
 - **Postgres (step 8)** blocks launch and nothing before it. The current write
   path holds a process-global lock, so correctness depends on exactly one
   process existing — acceptable for a single-tenant deployment, an availability
