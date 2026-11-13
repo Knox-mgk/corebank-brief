@@ -10,14 +10,16 @@ public so the design can be read and discussed; the implementation is not.
 **Nothing described here holds customer money, and nothing is open to the
 public.** One instance is installed on the author's own VPS. It binds to
 loopback and is reachable only through an SSH forward, except for **exactly one
-public path** — the provider's collections webhook, behind TLS and HMAC — while
+public path** — the provider's webhook, behind TLS and HMAC — while
 every other route, including the dashboard and the admin API, returns 404 from
-the internet (§5). The service runs on that host at this brief's commit; the
-status board in §5 lists unfinished and known-broken work openly because that
-is what makes a status board useful, and §3 sets out why no real money can move
-until a licensed partner signs.
+the internet (§5). That instance has moved **the author's own money** on live
+rails once, deliberately, as a round trip back into the same provider account
+(§6) — there is no customer, no third party and no pooled float. The status
+board in §5 lists unfinished and known-broken work openly because that
+is what makes a status board useful, and §3 sets out why no customer money can
+move until a licensed partner signs.
 
-**Last synced with the code:** 2026-11-13, commit `19621c8` (code repo HEAD).
+**Last synced with the code:** 2026-11-13, commit `c05fd32` (code repo HEAD).
 **Suite at that commit:** 985 unit tests, 0 failures, re-run on 2026-11-11 on
 the VPS (169s, `python3 -m unittest discover -s tests`). The phone can no
 longer run the suite — it needs ~280 MB of simultaneous scratch and the device
@@ -426,9 +428,54 @@ deployment artifacts.
 **Steps 1 through 6 are done, and step 7's commit closed the outbound half of
 the KYC gate. The next code step is org-scoped fees.**
 
-The real blocker is still not code — but it has moved a long way, and the
-remaining item is a provider compliance decision rather than an engineering
-task:
+### It has now moved real money, in both directions
+
+On 2026-11-13 corebank executed its **first real payout on live rails**, which
+is the one claim no amount of testing can establish:
+
+    NGN 100.00 (+ NGN 10.00 provider fee, 0.75 VAT)
+    ledger payout -> provider transfer -> SUCCESSFUL
+    NIBSS session id returned as the transfer's payment proof
+    payout wallet 978.50 -> 868.50 == exactly amount + fee
+    the money ARRIVED, confirmed as an inbound charge on the destination
+    trial balance net = 0 balanced; custody: unexplained 0.00, in flight 0.00
+
+The destination was a virtual account on the **same** provider account, so the
+money returned to the author minus the fee and there was no third party to
+recover anything from. The ledger drove its real path — record the pooled
+deposit, allocate to an agent, request the payout, place a hold, submit — not a
+provider call in isolation.
+
+Two design points carried the risk:
+
+- The sending agent was created with a per-transaction, daily **and** monthly
+  ceiling of 200 and a limit of one payout per day. Re-running the script is
+  therefore **refused by the policy engine**, not merely discouraged, so an
+  accidental second invocation cannot repeat a live payment.
+- The destination was **name-enquired before any ledger write**. A provider
+  refusal after a hold is placed leaves money held; discovering a bad
+  destination first costs one read.
+
+**And the public webhook edge fired for the first time.** The provider's
+`transfer.disburse` callback reached the single public path 8 seconds after
+submission, verified its HMAC and **settled the payout autonomously** before
+any reconciliation was run. Every previous proof of that edge was a probe
+signing its own requests — i.e. the system proving something to itself. This
+was a third party.
+
+One finding came out of it, and it is the kind only real money surfaces: the
+return leg's inbound notification was processed as **ignored**, correctly,
+because that virtual account is not a tracked collections destination. But it
+means a deposit into a virtual account the ledger does not know about is
+dropped rather than parked as unattributed money. Step 4 built the unattributed
+path for money whose **owner** is unknown; money whose **destination** is
+unknown takes a different branch. That closes before any end customer is
+issued a NUBAN.
+
+### Where the remaining gates stand
+
+The remaining item is a provider compliance decision rather than an engineering
+task, and — as the live payout proves — it never blocked money movement at all:
 
 1. **Money now arrives for real.** The service's single public path is
    registered as the V4 live hook (`whe_*`, status `enabled`) with the same
@@ -456,10 +503,18 @@ task:
    lists the options but never says which is selected, which is how a
    misconfigured account can look fine.
 
-3. **One gate remains, and it belongs to the provider.** The arrived money sits
-   in the account's **collection** balance while the **payout** balance reads
-   0.00. The only bridge between the two is a settlement account, and the
-   provider refuses to add one:
+3. **One gate remains, and it belongs to the provider — but it never held the
+   money.** The brief previously recorded that the arrived money sat in the
+   account's collection balance while the payout balance read 0.00, with a
+   settlement account as the only bridge. That was **half wrong, and worth
+   naming as wrong**: the provider settled the funds into its own
+   provider-operated payout wallet one business day after arrival, with no
+   settlement account configured and the earnings preference still pointing at
+   a bank account. The money crossed by itself; the live payout above spent it.
+
+   What the settlement account actually gates is narrower: the provider
+   **automatically pushing money out to the merchant's own external bank
+   account**. That is still refused:
 
        422 "Bank account name does not match the business name."
 
@@ -468,15 +523,18 @@ task:
    spellings produced the byte-identical error, which is the tell that the
    submitted name is ignored entirely — the provider resolves the account
    itself and compares the bank's answer against the registered business name.
-   The account additionally reports `is_live: 0` / `is_live_approved: 0` on the
-   payments side even though the banking side reads activated, so this may be
-   the first of two gates. Resolution is a change to a registered business
-   identity or a provider support decision. No code change reaches it.
+   The business-name field is additionally **not editable by the merchant**
+   (the input is `disabled` and `readOnly` with no edit affordance, unlike
+   every sibling field), so the only routes are a provider support decision or
+   switching the earnings preference to the provider's own payout wallet. The
+   account also reports `is_live: 0` / `is_live_approved: 0` on the payments
+   side even though the banking side reads activated — a narrower gate than it
+   appeared, since collections, settlement and transfers all worked regardless.
 
    Worth recording because it is the kind of thing that is invisible until real
-   money shows up: a payment integration can be *complete and correct* and
-   still not move money, because the last mile is a compliance rule about whose
-   name is on the receiving account.
+   money shows up: reasoning about a payment integration from a stale balance
+   snapshot produced an hour of argument about a compliance rule that was not
+   blocking anything. One live balance read ended it.
 
 Nothing is deployed for public use, nothing holds customer money, and there is
 no production instance.
