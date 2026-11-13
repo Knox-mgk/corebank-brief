@@ -17,7 +17,7 @@ status board in §5 lists unfinished and known-broken work openly because that
 is what makes a status board useful, and §3 sets out why no real money can move
 until a licensed partner signs.
 
-**Last synced with the code:** 2026-11-11, commit `7e6ed31` (code repo HEAD).
+**Last synced with the code:** 2026-11-13, commit `19621c8` (code repo HEAD).
 **Suite at that commit:** 985 unit tests, 0 failures, re-run on 2026-11-11 on
 the VPS (169s, `python3 -m unittest discover -s tests`). The phone can no
 longer run the suite — it needs ~280 MB of simultaneous scratch and the device
@@ -426,27 +426,57 @@ deployment artifacts.
 **Steps 1 through 6 are done, and step 7's commit closed the outbound half of
 the KYC gate. The next code step is org-scoped fees.**
 
-The real blocker is not code. Two items sit outside the repo and no amount of
-engineering moves either:
+The real blocker is still not code — but it has moved a long way, and the
+remaining item is a provider compliance decision rather than an engineering
+task:
 
-1. **The payout product refusal has moved one rung, and is now a dashboard
-   setting the account owner must make.** v3 answered `400 "merchant is not
-   enabled to make transfers"` — an account entitlement. The live account has
-   **no v3 key at all**; its live path is Flutterwave **v4 OAuth**, and v4
-   answers a different refusal: `400 TRANSFER_SOURCE_REQUIRED (216400)
-   "Kindly select your transfer source on the dashboard"`. That is progress —
-   the entitlement gate is no longer what refuses. But the dashboard exposes
-   no standalone transfer-source setting: the only source selector found is
-   inside the transfer wizard itself, where it reads **"no balance
-   available"**, and all 69 v4 wallets read 0.00. The working hypothesis is
-   that the source cannot be selected until the NGN wallet holds money, which
-   makes funding the prerequisite rather than a later step.
-2. **The webhook URL is registered.** The service's single public path is
-   saved as the V4 live hook (`whe_*`, status `enabled`) with the same secret
-   hash the service verifies against, confirmed by re-reading the form after a
-   fresh page load. The edge accepts a correctly signed v4
-   `flutterwave-signature` body with 200 and rejects a forged one with 401.
-   What remains untested is a real provider delivery, which needs (1).
+1. **Money now arrives for real.** The service's single public path is
+   registered as the V4 live hook (`whe_*`, status `enabled`) with the same
+   secret hash the service verifies against. A genuine inbound bank transfer
+   (NGN 978.50, from a real account on NIBSS rails) was delivered to that
+   edge, verified, attributed to a minted virtual account and posted. The edge
+   accepts a correctly signed v4 `flutterwave-signature` body with 200 and
+   rejects a forged one with 401. The inbound half is no longer theoretical.
+
+2. **The payout refusal ladder is fully climbed.** Each rung had a different
+   owner, and all four are now closed:
+
+   | refusal | owner | state |
+   |---|---|---|
+   | `"Please enable IP Whitelisting"` | network | fixed egress whitelisted |
+   | `"merchant is not enabled to make transfers"` | provider entitlement | granted |
+   | `TRANSFER_SOURCE_REQUIRED (216400)` | dashboard setting | enabled |
+   | `422` on a fabricated destination | the destination | a real resolvable account is ACCEPTED |
+
+   The earlier hypothesis recorded here — that the transfer source could not be
+   selected until the NGN wallet held money — was **wrong**, and is worth
+   naming as wrong. The setting was Business preference -> Security -> Transfer
+   preferences, sitting at "Disable all transfers". "No balance available" in
+   the wizard was a symptom, not the cause. Reading a radio group's `innerText`
+   lists the options but never says which is selected, which is how a
+   misconfigured account can look fine.
+
+3. **One gate remains, and it belongs to the provider.** The arrived money sits
+   in the account's **collection** balance while the **payout** balance reads
+   0.00. The only bridge between the two is a settlement account, and the
+   provider refuses to add one:
+
+       422 "Bank account name does not match the business name."
+
+   The merchant is registered under the author's name; the destination bank
+   returns the same person's name **with a middle name included**. Four
+   spellings produced the byte-identical error, which is the tell that the
+   submitted name is ignored entirely — the provider resolves the account
+   itself and compares the bank's answer against the registered business name.
+   The account additionally reports `is_live: 0` / `is_live_approved: 0` on the
+   payments side even though the banking side reads activated, so this may be
+   the first of two gates. Resolution is a change to a registered business
+   identity or a provider support decision. No code change reaches it.
+
+   Worth recording because it is the kind of thing that is invisible until real
+   money shows up: a payment integration can be *complete and correct* and
+   still not move money, because the last mile is a compliance rule about whose
+   name is on the receiving account.
 
 Nothing is deployed for public use, nothing holds customer money, and there is
 no production instance.
