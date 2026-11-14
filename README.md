@@ -19,7 +19,7 @@ board in §5 lists unfinished and known-broken work openly because that
 is what makes a status board useful, and §3 sets out why no customer money can
 move until a licensed partner signs.
 
-**Last synced with the code:** 2026-11-13, commit `c05fd32` (code repo HEAD).
+**Last synced with the code:** 2026-11-14, commit `d2ff746` (code repo HEAD).
 **Suite at that commit:** 985 unit tests, 0 failures, re-run on 2026-11-11 on
 the VPS (169s, `python3 -m unittest discover -s tests`). The phone can no
 longer run the suite — it needs ~280 MB of simultaneous scratch and the device
@@ -775,18 +775,35 @@ be blocking when every one of the eight steps is green.
 - **A Nigerian fintech lawyer** needs to confirm the B1 position before anything
   touches real money.
 - **A CAC-registered company** is a precondition for partner KYB.
-- **Live payout rails are still unproven, but the blocker has moved TWICE.**
-  2026-10-23: from a fixed egress address the provider stopped answering
-  "Please enable IP Whitelisting" and started answering "merchant is not
-  enabled to make transfers" — a network obstacle replaced by an account one.
-  2026-11-11: the live account turns out to have **no v3 key at all**, so the
-  real path is v4 OAuth, which refuses with `TRANSFER_SOURCE_REQUIRED` —
-  "kindly select your transfer source on the dashboard". The entitlement wall
-  is no longer what answers. The dashboard has no standalone transfer-source
-  control; the only selector sits inside the transfer wizard and reads "no
-  balance available" against 69 wallets at 0.00, so **funding the NGN wallet
-  is now believed to be the prerequisite, not a later step.** Reads are proven
-  live (598 banks, balances, 69 wallets); writes stop at the source setting.
+- **Live payout rails are PROVEN as of 2026-11-13.** The project crossed the
+  line it existed to cross: NGN 100.00 left the provider to a real NUBAN
+  (`trf_elu1Oyx63rCTYB4eBfqbw`, SUCCESSFUL, NIBSS proof on file), and the
+  public TLS webhook edge received the provider's own `transfer.disburse`
+  callback 8 seconds later, verified its HMAC and settled the payout by itself
+  before any reconciliation ran. Every earlier proof of that edge was a probe
+  signing its own requests. Three obstacles were cleared in sequence to get
+  there: the IP whitelist (fixed egress, 2026-10-23), the v3/v4 discovery (the
+  live account has no v3 key at all, so the real path is v4 OAuth), and
+  `TRANSFER_SOURCE_REQUIRED`, which cleared once the dashboard transfer source
+  was set and the NGN wallet held a balance.
+- **An inbound deposit was silently dropped, and that is now fixed and
+  settled.** `handle_webhook` matched every callback against the payouts
+  table; a deposit has no payout row, so every inbound `charge.completed` was
+  answered `ignored` and wrote nothing to the ledger. A real NGN 1,000 arrived
+  and the books never heard about it — the worst shape of money bug, because
+  no total looks wrong, so no reconciliation flags it. The routing is fixed, an
+  unknown destination now parks money with a written reason instead of
+  discarding it, and on 2026-11-14 the NGN 1,000 was booked onto the live
+  ledger. It sits as `unattributed` with an honest reason, because the account
+  number it arrived for was a funding account and not a customer's. The
+  remaining 131.50 difference against the partner is recorded, not corrected:
+  21.50 provider collection fee plus the 110.00 consumed by the test payout.
+- **An operator surface that counts without classifying is its own hazard.**
+  The first version of the lost-money report described the test payout
+  ARRIVING BACK as a second unbooked deposit and told the operator to
+  re-ingest it. Following that advice would have invented exactly the payout
+  amount. Inbound credits are now joined against prior payout destinations by
+  amount and ordering, and a self-send is refused with a stated verdict.
 - **Postgres (step 8)** blocks launch and nothing before it. The current write
   path holds a process-global lock, so correctness depends on exactly one
   process existing — acceptable for a single-tenant deployment, an availability
