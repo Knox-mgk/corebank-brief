@@ -19,11 +19,12 @@ board in §5 lists unfinished and known-broken work openly because that
 is what makes a status board useful, and §3 sets out why no customer money can
 move until a licensed partner signs.
 
-**Last synced with the code:** 2026-11-14, commit `3db1d17` (code repo HEAD).
-**Suite at that commit:** 1,031 unit tests, 0 failures, re-run on 2026-11-14 on
-the VPS (126s, `python3 -m unittest discover -s tests`). The phone can no
-longer run the suite — it needs ~280 MB of simultaneous scratch and the device
-is at 100% disk, which surfaces as a phantom ENOSPC rather than a test failure.
+**Last synced with the code:** 2026-11-14, commit `b86fb40` (code repo HEAD).
+**Suite at that commit:** 1,059 unit tests, 0 failures, re-run on 2026-11-14 on
+the author's phone (283s, `python -m unittest discover -s tests`) — the device
+freed enough disk for it to run locally again, having previously failed with a
+phantom ENOSPC that reads as a wall of test failures rather than as an
+environment fault.
 Plus 657 live assertions against real servers, all re-run the same day: 76
 HTTP, 82 MCP, 144 dashboard, 65 MFA, 56 inbound, 107 DOM, and a 127-assertion
 15-phase lifecycle simulation. (Packaging adds 33 more but was skipped on this
@@ -333,7 +334,7 @@ section of the group directive:
 | CSP: the inline block authorised by a per-response nonce, not `'unsafe-inline'` | **done** |
 | Payout provider **selected explicitly**, never inferred from a credential | **done** |
 | `connect()` closes its handle when the file turns out to be unreadable | **done** 2026-11-05 |
-| Deployed on the author's VPS, one public path (collections webhook) | installed and **running** at this brief's commit, schema 17 |
+| Deployed on the author's VPS, one public path (collections webhook) | installed and **running** at this brief's commit, schema 18 |
 
 Nothing is reachable by a customer, and the pooled balance is a sandbox figure.
 
@@ -445,6 +446,20 @@ have reported it.
 **The remaining code step is 8, Postgres**, and it is a launch blocker rather
 than a development one: SQLite's single writer is fine for one operator and
 wrong for concurrent tenants.
+
+**A routing defect found during step 7 is also now closed.** The HTTP layer
+defined handlers for GET and POST only, and Python's base HTTP server answers
+any other verb with `501 Unsupported method` *before* the router is consulted.
+A DELETE route for closing an invoice collection reference had therefore sat in
+the router since invoicing landed as unreachable code that reads, to anyone
+scanning it, as a working feature: the route was written, the service method
+existed and was unit-tested four ways, and the only missing piece was five
+lines of dispatch. No test caught it because every test of that call reached
+the service object directly — a library-only test passes whether or not HTTP
+can route to it, and the seam between the two is where features go missing.
+The fix adds exactly one verb; PUT and PATCH deliberately still answer 501,
+because a dispatcher for a verb with no routes turns an honest "this server
+does not speak PUT" into a 404 that blames the path.
 
 **But the real blocker is not code and never was.** Nothing here can hold
 customer money until a licensed partner signs (§3). Every engineering step
