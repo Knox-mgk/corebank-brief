@@ -20,13 +20,15 @@ is what makes a status board useful, and §3 sets out why no customer money can
 move until a licensed partner signs.
 
 **Last synced with the code:** 2026-11-14, commit `d2ff746` (code repo HEAD).
-**Suite at that commit:** 985 unit tests, 0 failures, re-run on 2026-11-11 on
-the VPS (169s, `python3 -m unittest discover -s tests`). The phone can no
+**Suite at that commit:** 1,031 unit tests, 0 failures, re-run on 2026-11-14 on
+the VPS (126s, `python3 -m unittest discover -s tests`). The phone can no
 longer run the suite — it needs ~280 MB of simultaneous scratch and the device
-is at 99% disk, which surfaces as a phantom ENOSPC rather than a test failure.
-Plus 530 live assertions against real servers, all re-run the same day: 76
-HTTP, 82 MCP, 144 dashboard, 65 MFA, 56 inbound, 107 DOM, 33 packaging, and a
-123-assertion 15-phase lifecycle simulation.
+is at 100% disk, which surfaces as a phantom ENOSPC rather than a test failure.
+Plus 657 live assertions against real servers, all re-run the same day: 76
+HTTP, 82 MCP, 144 dashboard, 65 MFA, 56 inbound, 107 DOM, and a 127-assertion
+15-phase lifecycle simulation. (Packaging adds 33 more but was skipped on this
+run: `smoke_package.py` needs `pip install build`, i.e. network, and was last
+green on 2026-11-11 — counted as not-run rather than passed.)
 
 ---
 
@@ -425,8 +427,13 @@ deployment artifacts.
 
 ## 6. What is next
 
-**Steps 1 through 6 are done, and step 7's commit closed the outbound half of
-the KYC gate. The next code step is org-scoped fees.**
+**Steps 1 through 6 are done. The next code step is org-scoped fees (step 7):
+`fee_schedule.organization_id` has existed since the tenancy migration but
+`fees.get_schedule` and `fees.quote` still take only a currency, so the column
+is carried and ignored — every tenant is priced identically, and because
+`currency` is the table's primary key, one organisation setting a schedule
+overwrites every other organisation's. That is a tenancy gap in the revenue
+path, not a pricing nicety, which is why it is next.**
 
 ### It has now moved real money, in both directions
 
@@ -514,7 +521,10 @@ task, and — as the live payout proves — it never blocked money movement at a
 
    What the settlement account actually gates is narrower: the provider
    **automatically pushing money out to the merchant's own external bank
-   account**. That is still refused:
+   account**. The account-security gate in front of that form — it demanded an
+   authenticator-app second factor, where the account had only email OTP — was
+   cleared on 2026-11-13, so the form is now reachable and the refusal below is
+   the real one rather than a missing prerequisite. It is still refused:
 
        422 "Bank account name does not match the business name."
 
