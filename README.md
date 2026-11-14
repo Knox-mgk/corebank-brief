@@ -19,7 +19,7 @@ board in §5 lists unfinished and known-broken work openly because that
 is what makes a status board useful, and §3 sets out why no customer money can
 move until a licensed partner signs.
 
-**Last synced with the code:** 2026-11-14, commit `d2ff746` (code repo HEAD).
+**Last synced with the code:** 2026-11-14, commit `3db1d17` (code repo HEAD).
 **Suite at that commit:** 1,031 unit tests, 0 failures, re-run on 2026-11-14 on
 the VPS (126s, `python3 -m unittest discover -s tests`). The phone can no
 longer run the suite — it needs ~280 MB of simultaneous scratch and the device
@@ -312,8 +312,8 @@ under a higher one. Each step ends with a green suite and a commit.
 | 4 | Inbound: virtual accounts + collections webhook, and identity capture pulled forward | **done** |
 | 5 | Outbound webhooks: signing, retries, dead-letter, replay | **done** |
 | 6 | KYC tiers + limit intersection | **done**, inbound and outbound |
-| 7 | Org-scoped fees replacing the single schedule | not started — **next** |
-| 8 | Postgres | not started — blocks launch, not development |
+| 7 | Org-scoped fees replacing the single schedule | done — M18, 23 tests |
+| 8 | Postgres | not started — **next**, and it blocks launch |
 
 Work that was not on the eight-step order and landed anyway, each closing a
 section of the group directive:
@@ -427,13 +427,28 @@ deployment artifacts.
 
 ## 6. What is next
 
-**Steps 1 through 6 are done. The next code step is org-scoped fees (step 7):
-`fee_schedule.organization_id` has existed since the tenancy migration but
-`fees.get_schedule` and `fees.quote` still take only a currency, so the column
-is carried and ignored — every tenant is priced identically, and because
-`currency` is the table's primary key, one organisation setting a schedule
-overwrites every other organisation's. That is a tenancy gap in the revenue
-path, not a pricing nicety, which is why it is next.**
+**All seven code steps of the eight-step order are done. Step 7 (org-scoped
+fees) landed on 2026-11-14 as migration M18 with 23 tests.** The defect it
+closed was not the unused `fee_schedule.organization_id` column — it was the
+table's KEY. `currency` was the primary key and the upsert conflicted on
+`currency` alone, so one organisation writing its own pricing REPLACED every
+other organisation's. That is tenant isolation failing in the revenue path,
+the same shape the tenancy migration fixed for accounts and payouts.
+
+The rule now: an organisation's own row wins; with no row of its own it falls
+back to the platform row and stops there. The zero default applies only when a
+currency has no row at all. That distinction is the whole safety property — a
+tenant that inherited zero would move money for free while the trial balance
+stayed at zero and custody stayed reconciled, so nothing in the system would
+have reported it.
+
+**The remaining code step is 8, Postgres**, and it is a launch blocker rather
+than a development one: SQLite's single writer is fine for one operator and
+wrong for concurrent tenants.
+
+**But the real blocker is not code and never was.** Nothing here can hold
+customer money until a licensed partner signs (§3). Every engineering step
+above is preparation for that conversation, not a substitute for it.
 
 ### It has now moved real money, in both directions
 
