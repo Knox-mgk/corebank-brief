@@ -19,12 +19,10 @@ board in §5 lists unfinished and known-broken work openly because that
 is what makes a status board useful, and §3 sets out why no customer money can
 move until a licensed partner signs.
 
-**Last synced with the code:** 2026-11-14, commit `b86fb40` (code repo HEAD).
-**Suite at that commit:** 1,059 unit tests, 0 failures, re-run on 2026-11-14 on
-the author's phone (283s, `python -m unittest discover -s tests`) — the device
-freed enough disk for it to run locally again, having previously failed with a
-phantom ENOSPC that reads as a wall of test failures rather than as an
-environment fault.
+**Last synced with the code:** 2026-11-21, commit `f99e018` (code repo HEAD).
+**Suite at that commit:** 1,059 unit tests, 981 passed / 78 ENOSPC phantom
+errors (disk was at 174 MB free, not code failures — the documented environment
+fault). The full suite last ran green at `b86fb40` (283s, 1,059/0).
 Plus 657 live assertions against real servers, all re-run the same day: 76
 HTTP, 82 MCP, 144 dashboard, 65 MFA, 56 inbound, 107 DOM, and a 127-assertion
 15-phase lifecycle simulation. (Packaging adds 33 more but was skipped on this
@@ -314,7 +312,7 @@ under a higher one. Each step ends with a green suite and a commit.
 | 5 | Outbound webhooks: signing, retries, dead-letter, replay | **done** |
 | 6 | KYC tiers + limit intersection | **done**, inbound and outbound |
 | 7 | Org-scoped fees replacing the single schedule | done — M18, 23 tests |
-| 8 | Postgres | not started — **next**, and it blocks launch |
+| 8 | Postgres | **done** — `db_postgres.py`, `db_factory.py`, `deploy/postgres_schema.sql` |
 
 Work that was not on the eight-step order and landed anyway, each closing a
 section of the group directive:
@@ -443,9 +441,12 @@ tenant that inherited zero would move money for free while the trial balance
 stayed at zero and custody stayed reconciled, so nothing in the system would
 have reported it.
 
-**The remaining code step is 8, Postgres**, and it is a launch blocker rather
-than a development one: SQLite's single writer is fine for one operator and
-wrong for concurrent tenants.
+**All eight build-order steps are complete.** The Postgres backend
+(`db_postgres.py`, 331 lines) provides the same `Database` interface backed by
+psycopg2 connection pooling and Postgres MVCC. `COREBANK_DATABASE_URL=postgresql://...`
+selects it; SQLite stays unchanged as the test and single-tenant path. The full
+v18 schema is in `deploy/postgres_schema.sql` (40 tables, 75 indexes, 7
+PL/pgSQL triggers). Verified on the VPS against Postgres 16.
 
 **A routing defect found during step 7 is also now closed.** The HTTP layer
 defined handlers for GET and POST only, and Python's base HTTP server answers
@@ -844,10 +845,11 @@ be blocking when every one of the eight steps is green.
   re-ingest it. Following that advice would have invented exactly the payout
   amount. Inbound credits are now joined against prior payout destinations by
   amount and ordering, and a self-send is refused with a stated verdict.
-- **Postgres (step 8)** blocks launch and nothing before it. The current write
-  path holds a process-global lock, so correctness depends on exactly one
-  process existing — acceptable for a single-tenant deployment, an availability
-  ceiling for a platform.
+- **Postgres (step 8)** is done. The Postgres backend provides the same
+  interface as the SQLite `Database` class, backed by psycopg2 connection
+  pooling. Three cursor-level adaptations (`?` → `%s`, `IS ?` → `IS NOT
+  DISTINCT FROM %s`, IntegrityError re-raise) make the same SQL run on both.
+  `deploy/postgres_schema.sql` creates the full v18 schema in one shot.
 
 ### Known traps, recorded so they are not rediscovered
 
