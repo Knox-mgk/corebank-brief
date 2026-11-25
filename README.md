@@ -7,27 +7,25 @@ implementation. The code is at
 private**, and it will 404 for you unless you are the author. This brief is
 public so the design can be read and discussed; the implementation is not.
 
-**Nothing described here holds customer money, and nothing is open to the
-public.** One instance is installed on the author's own VPS. It binds to
-loopback and is reachable only through an SSH forward, except for **exactly one
-public path** — the provider's webhook, behind TLS and HMAC — while
-every other route, including the dashboard and the admin API, returns 404 from
-the internet (§5). That instance has moved **the author's own money** on live
-rails once, deliberately, as a round trip back into the same provider account
-(§6) — there is no customer, no third party and no pooled float. The status
-board in §5 lists unfinished and known-broken work openly because that
+**Nothing described here holds customer money.** One instance is installed on
+the author's own VPS. Since 2026-11-21 its dashboard and API are served publicly
+at `api.odusipe.tech` behind TLS, with **registration closed**: the page loads
+for anyone, but every data route answers 401 without a credential and the
+sign-up endpoint answers 403, so no stranger can create an account (§5). The
+provider webhook has its own rate limit and HMAC check. That instance has moved
+**the author's own money** on live rails, deliberately, back into his own
+accounts (§6) — there is no customer, no third party and no pooled float. The
+status board in §5 lists unfinished and known-broken work openly because that
 is what makes a status board useful, and §3 sets out why no customer money can
 move until a licensed partner signs.
 
-**Last synced with the code:** 2026-11-21, commit `f99e018` (code repo HEAD).
-**Suite at that commit:** 1,059 unit tests, 981 passed / 78 ENOSPC phantom
-errors (disk was at 174 MB free, not code failures — the documented environment
-fault). The full suite last ran green at `b86fb40` (283s, 1,059/0).
-Plus 657 live assertions against real servers, all re-run the same day: 76
-HTTP, 82 MCP, 144 dashboard, 65 MFA, 56 inbound, 107 DOM, and a 127-assertion
-15-phase lifecycle simulation. (Packaging adds 33 more but was skipped on this
-run: `smoke_package.py` needs `pip install build`, i.e. network, and was last
-green on 2026-11-11 — counted as not-run rather than passed.)
+**Last synced with the code:** 2026-11-25, commit `11a7385` (code repo HEAD),
+schema **v21**.
+**Suite:** 1,089 unit tests, 0 failures, run 2026-11-25 on the VPS against
+`bff6c61` (149s). `11a7385` changes only the nginx config, the edge probe and
+docs, so no product code is untested. The edge probe passes 12/12 against
+production at `11a7385`. The 657 live smoke assertions were last re-run on
+2026-11-14 and have **not** been re-run since; treat them as stale.
 
 ---
 
@@ -332,7 +330,10 @@ section of the group directive:
 | CSP: the inline block authorised by a per-response nonce, not `'unsafe-inline'` | **done** |
 | Payout provider **selected explicitly**, never inferred from a credential | **done** |
 | `connect()` closes its handle when the file turns out to be unreadable | **done** 2026-11-05 |
-| Deployed on the author's VPS, one public path (collections webhook) | installed and **running** at this brief's commit, schema 18 |
+| Deployed on the author's VPS, dashboard + API public behind TLS, registration closed | installed and **running** at this brief's commit, schema 21 |
+| Full HTTP surface: customers, KYC, virtual accounts, attribution, members, custody, outbound webhooks | **done** 2026-11-21 — no operation needs a shell on the server |
+| Dashboard rebuilt as a platform console (customers, VAs, collections, invoices, custody, provider tools) | **done** 2026-11-25 |
+| Registration closed by default; collection payloads and member emails hidden from non-admins | **done** 2026-11-25 |
 
 Nothing is reachable by a customer, and the pooled balance is a sandbox figure.
 
@@ -444,9 +445,11 @@ have reported it.
 **All eight build-order steps are complete.** The Postgres backend
 (`db_postgres.py`, 331 lines) provides the same `Database` interface backed by
 psycopg2 connection pooling and Postgres MVCC. `COREBANK_DATABASE_URL=postgresql://...`
-selects it; SQLite stays unchanged as the test and single-tenant path. The full
-v18 schema is in `deploy/postgres_schema.sql` (40 tables, 75 indexes, 7
-PL/pgSQL triggers). Verified on the VPS against Postgres 16.
+selects it; SQLite stays unchanged as the test and single-tenant path, and is
+what production runs. `deploy/postgres_schema.sql` (40 tables, 75 indexes, 7
+PL/pgSQL triggers) was verified on Postgres 16 at v18. **Open:** the code has
+since moved to v21 and the Postgres schema file has not, so the Postgres path
+would refuse to boot today. It is not in use, so nothing is down.
 
 **A routing defect found during step 7 is also now closed.** The HTTP layer
 defined handlers for GET and POST only, and Python's base HTTP server answers
@@ -849,7 +852,8 @@ be blocking when every one of the eight steps is green.
   interface as the SQLite `Database` class, backed by psycopg2 connection
   pooling. Three cursor-level adaptations (`?` → `%s`, `IS ?` → `IS NOT
   DISTINCT FROM %s`, IntegrityError re-raise) make the same SQL run on both.
-  `deploy/postgres_schema.sql` creates the full v18 schema in one shot.
+  `deploy/postgres_schema.sql` creates the v18 schema in one shot; it has
+  **not** been brought to v21 yet (see §5).
 
 ### Known traps, recorded so they are not rediscovered
 
